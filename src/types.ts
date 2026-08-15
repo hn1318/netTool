@@ -2,13 +2,26 @@
 export interface TunnelConfig {
   id: string;
   name: string;
-  type: "tcp" | "udp" | "http" | "https" | "stcp" | "xtcp";
+  type: "tcp" | "udp" | "http" | "https" | "stcp" | "xtcp" | "tcpmux";
   localIp: string;
   localPort: number;
   remotePort: number;
   customDomains?: string;
+  subdomain?: string;
+  useEncryption?: boolean;
+  useCompression?: boolean;
+  bandwidthLimit?: string;
   enabled: boolean;
   source?: "toml" | "json" | "manual";
+}
+
+// FRP 服务端连接配置（来自 TOML 顶部字段）
+export interface FrpServerConfig {
+  serverAddr: string;
+  serverPort: number;
+  user?: string;
+  authMethod?: string;
+  authToken?: string;
 }
 
 // FRP 版本信息

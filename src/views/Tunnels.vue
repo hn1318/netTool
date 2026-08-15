@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { parseToml, jsonToToml, genId } from "../api";
+import { parseTomlTunnels, jsonToToml, tunnelsToToml, genId } from "../api";
 import type { TunnelConfig } from "../types";
 
-const props = defineProps<{ tunnels: TunnelConfig[] }>();
+const props = defineProps<{
+  tunnels: TunnelConfig[];
+  serverAddr: string;
+  serverPort: number;
+  userName: string;
+  authToken: string;
+}>();
 const emit = defineEmits<{
   (e: "add", t: TunnelConfig): void;
+  (e: "update-tunnel", t: TunnelConfig): void;
   (e: "remove", id: string): void;
   (e: "toggle", id: string): void;
 }>();
@@ -16,16 +23,26 @@ const importType = ref<"toml" | "json">("toml");
 const importError = ref("");
 const importParsing = ref(false);
 
-const showAdd = ref(false);
-const newTunnel = ref<Omit<TunnelConfig, "id">>({
-  name: "",
-  type: "tcp",
-  localIp: "127.0.0.1",
-  localPort: 0,
-  remotePort: 0,
-  enabled: true,
-  source: "manual",
-});
+// 新建 / 编辑共用一个弹窗
+const showEdit = ref(false);
+const editingId = ref<string | null>(null);
+const editTunnel = ref<Omit<TunnelConfig, "id">>(emptyTunnel());
+
+function emptyTunnel(): Omit<TunnelConfig, "id"> {
+  return {
+    name: "",
+    type: "tcp",
+    localIp: "127.0.0.1",
+    localPort: 0,
+    remotePort: 0,
+    customDomains: "",
+    subdomain: "",
+    useEncryption: true,
+    useCompression: false,
+    enabled: true,
+    source: "manual",
+  };
+}
 
 const typeColors: Record<string, string> = {
   tcp: "rgba(79,140,255,.14)",
@@ -34,6 +51,7 @@ const typeColors: Record<string, string> = {
   https: "rgba(167,139,250,.14)",
   stcp: "rgba(248,113,113,.14)",
   xtcp: "rgba(96,165,250,.14)",
+  tcpmux: "rgba(96,165,250,.14)",
 };
 const typeTextColors: Record<string, string> = {
   tcp: "#4f8cff",
@@ -42,44 +60,13 @@ const typeTextColors: Record<string, string> = {
   https: "#a78bfa",
   stcp: "#f87171",
   xtcp: "#60a5fa",
+  tcpmux: "#60a5fa",
 };
 
-// 从 TOML 文本解析隧道
-function parseTomlTunnels(text: string): TunnelConfig[] {
-  // 先尝试用 Rust 端解析（异步），这里做同步的简化解析
-  const result: TunnelConfig[] = [];
-  // 匹配 [[proxies]] 段落中的 name/type/localIP/localPort/remotePort
-  const proxyBlocks = text.split(/\[\[proxies\]\]/).slice(1);
-  for (const block of proxyBlocks) {
-    const get = (key: string) => {
-      const m = block.match(new RegExp(`${key}\\s*=\\s*"([^"]*)"`));
-      return m ? m[1] : "";
-    };
-    const name = get("name") || "proxy-" + genId();
-    const type = (get("type") || "tcp") as TunnelConfig["type"];
-    const localIp = get("localIP") || "127.0.0.1";
-    const localPort = parseInt(get("localPort") || "0");
-    const remotePort = parseInt(get("remotePort") || "0");
-    const customDomains = get("customDomains");
-    result.push({
-      id: genId(),
-      name,
-      type,
-      localIp,
-      localPort,
-      remotePort,
-      customDomains,
-      enabled: true,
-      source: "toml",
-    });
-  }
-  return result;
-}
-
+// JSON 导入解析
 function parseJsonTunnels(text: string): TunnelConfig[] {
   const data = JSON.parse(text);
   const result: TunnelConfig[] = [];
-  // 支持 {"proxies": [...]} 或直接数组
   const proxies = Array.isArray(data) ? data : data.proxies || [];
   for (const p of proxies) {
     result.push({
@@ -90,6 +77,9 @@ function parseJsonTunnels(text: string): TunnelConfig[] {
       localPort: Number(p.localPort || 0),
       remotePort: Number(p.remotePort || 0),
       customDomains: p.customDomains,
+      subdomain: p.subdomain,
+      useEncryption: p.transport?.useEncryption,
+      useCompression: p.transport?.useCompression,
       enabled: true,
       source: "json",
     });
@@ -107,17 +97,12 @@ async function doImport() {
   try {
     let parsed: TunnelConfig[] = [];
     if (importType.value === "toml") {
-      parsed = parseTomlTunnels(importText.value);
-      // 若同步解析为空，尝试后端解析
+      // 使用后端正确解析（含 transport 子表）
+      const result = await parseTomlTunnels(importText.value);
+      parsed = result.tunnels;
       if (parsed.length === 0) {
-        try {
-          await parseToml(importText.value);
-          importError.value = "未在 TOML 中检测到 [[proxies]] 隧道段落";
-          return;
-        } catch (e) {
-          importError.value = "TOML 解析失败：" + String(e);
-          return;
-        }
+        importError.value = "未在 TOML 中检测到 [[proxies]] 隧道段落";
+        return;
       }
     } else {
       parsed = parseJsonTunnels(importText.value);
@@ -136,27 +121,65 @@ async function doImport() {
   }
 }
 
-function addTunnel() {
-  if (!newTunnel.value.name) return;
-  emit("add", { ...newTunnel.value, id: genId() });
-  newTunnel.value = {
-    name: "",
-    type: "tcp",
-    localIp: "127.0.0.1",
-    localPort: 0,
-    remotePort: 0,
-    enabled: true,
-    source: "manual",
-  };
-  showAdd.value = false;
+// 新建
+function openAdd() {
+  editingId.value = null;
+  editTunnel.value = emptyTunnel();
+  showEdit.value = true;
 }
 
+// 编辑
+function openEdit(t: TunnelConfig) {
+  editingId.value = t.id;
+  editTunnel.value = {
+    name: t.name,
+    type: t.type,
+    localIp: t.localIp,
+    localPort: t.localPort,
+    remotePort: t.remotePort,
+    customDomains: t.customDomains || "",
+    subdomain: t.subdomain || "",
+    useEncryption: t.useEncryption ?? true,
+    useCompression: t.useCompression ?? false,
+    enabled: t.enabled,
+    source: t.source || "manual",
+  };
+  showEdit.value = true;
+}
+
+function saveTunnel() {
+  if (!editTunnel.value.name) return;
+  if (editingId.value) {
+    // 更新现有隧道
+    const idx = props.tunnels.findIndex((t) => t.id === editingId.value);
+    if (idx >= 0) {
+      emit("update-tunnel", { ...editTunnel.value, id: editingId.value });
+    }
+  } else {
+    emit("add", { ...editTunnel.value, id: genId() });
+  }
+  showEdit.value = false;
+}
+
+// 复制为 TOML
 async function copyToml(t: TunnelConfig) {
   try {
-    const toml = await jsonToToml(JSON.stringify({ proxies: [t] }));
+    const toml = await tunnelsToToml({
+      serverAddr: props.serverAddr || "frp.example.com",
+      serverPort: props.serverPort || 7000,
+      user: props.userName || "",
+      authToken: props.authToken || "",
+      tunnels: [t],
+    });
     await navigator.clipboard.writeText(toml);
   } catch {
-    /* ignore */
+    // 后端不可用时降级为前端生成
+    try {
+      const toml = await jsonToToml(JSON.stringify({ proxies: [t] }));
+      await navigator.clipboard.writeText(toml);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -177,7 +200,7 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
           </svg>
           导入配置
         </button>
-        <button class="btn btn-primary" @click="showAdd = true">
+        <button class="btn btn-primary" @click="openAdd">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
@@ -201,6 +224,7 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
             <div class="tunnel-name">
               {{ t.name }}
               <span v-if="t.customDomains" class="muted small">· {{ t.customDomains }}</span>
+              <span v-if="t.subdomain" class="muted small">· {{ t.subdomain }}</span>
             </div>
             <div class="tunnel-meta muted small">
               {{ t.localIp }}:{{ t.localPort }}
@@ -209,6 +233,11 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
             </div>
           </div>
           <span class="badge source-badge">{{ t.source }}</span>
+          <button class="icon-btn" title="编辑" @click="openEdit(t)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+            </svg>
+          </button>
           <button class="icon-btn" title="复制 TOML" @click="copyToml(t)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -252,7 +281,7 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
               v-model="importText"
               class="input code-area"
               rows="12"
-              :placeholder="importType === 'toml' ? '粘贴 [[proxies]] 配置...' : '粘贴 JSON 配置...'"
+              :placeholder="importType === 'toml' ? '粘贴完整 frpc.toml 配置（含 [[proxies]] 段落）...' : '粘贴 JSON 配置...'"
             ></textarea>
             <p v-if="importError" class="error-text">{{ importError }}</p>
           </div>
@@ -266,52 +295,75 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
       </div>
     </transition>
 
-    <!-- 新建弹窗 -->
+    <!-- 新建/编辑弹窗 -->
     <transition name="modal">
-      <div v-if="showAdd" class="modal-mask" @click.self="showAdd = false">
+      <div v-if="showEdit" class="modal-mask" @click.self="showEdit = false">
         <div class="modal">
           <div class="modal-header">
-            <h3>新建隧道</h3>
-            <button class="icon-btn" @click="showAdd = false">✕</button>
+            <h3>{{ editingId ? "编辑隧道" : "新建隧道" }}</h3>
+            <button class="icon-btn" @click="showEdit = false">✕</button>
           </div>
           <div class="modal-body">
             <div class="form-grid">
               <div class="field">
                 <label>隧道名称</label>
-                <input class="input" v-model="newTunnel.name" placeholder="例如 ssh" />
+                <input class="input" v-model="editTunnel.name" placeholder="例如 ssh" />
               </div>
               <div class="field">
                 <label>类型</label>
-                <select class="select" v-model="newTunnel.type">
+                <select class="select" v-model="editTunnel.type">
                   <option value="tcp">TCP</option>
                   <option value="udp">UDP</option>
                   <option value="http">HTTP</option>
                   <option value="https">HTTPS</option>
                   <option value="stcp">STCP</option>
                   <option value="xtcp">XTCP</option>
+                  <option value="tcpmux">TCPMUX</option>
                 </select>
               </div>
               <div class="field">
                 <label>本地 IP</label>
-                <input class="input" v-model="newTunnel.localIp" />
+                <input class="input" v-model="editTunnel.localIp" />
               </div>
               <div class="field">
                 <label>本地端口</label>
-                <input class="input" type="number" v-model.number="newTunnel.localPort" />
+                <input class="input" type="number" v-model.number="editTunnel.localPort" />
               </div>
               <div class="field">
                 <label>远程端口</label>
-                <input class="input" type="number" v-model.number="newTunnel.remotePort" />
+                <input class="input" type="number" v-model.number="editTunnel.remotePort" />
               </div>
               <div class="field">
                 <label>自定义域名（HTTP/HTTPS）</label>
-                <input class="input" v-model="newTunnel.customDomains" placeholder="可选" />
+                <input class="input" v-model="editTunnel.customDomains" placeholder="可选" />
+              </div>
+              <div class="field">
+                <label>子域名（subdomain）</label>
+                <input class="input" v-model="editTunnel.subdomain" placeholder="可选" />
+              </div>
+              <div class="field">
+                <label>带宽限制（bandwidthLimit）</label>
+                <input class="input" v-model="editTunnel.bandwidthLimit" placeholder="可选，如 1MB" />
+              </div>
+            </div>
+
+            <div class="transport-section">
+              <h4 class="transport-title">传输选项 (transport)</h4>
+              <div class="flex gap-4">
+                <label class="checkbox-field">
+                  <input type="checkbox" v-model="editTunnel.useEncryption" />
+                  启用加密 (useEncryption)
+                </label>
+                <label class="checkbox-field">
+                  <input type="checkbox" v-model="editTunnel.useCompression" />
+                  启用压缩 (useCompression)
+                </label>
               </div>
             </div>
           </div>
           <div class="modal-footer">
-            <button class="btn btn-ghost" @click="showAdd = false">取消</button>
-            <button class="btn btn-primary" @click="addTunnel">创建</button>
+            <button class="btn btn-ghost" @click="showEdit = false">取消</button>
+            <button class="btn btn-primary" @click="saveTunnel">{{ editingId ? "保存" : "创建" }}</button>
           </div>
         </div>
       </div>
@@ -442,8 +494,8 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  width: 560px;
-  max-width: 90vw;
+  width: 640px;
+  max-width: 92vw;
   max-height: 85vh;
   overflow: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -481,8 +533,32 @@ const enabledCount = computed(() => props.tunnels.filter((t) => t.enabled).lengt
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
+}
+.transport-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.transport-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.checkbox-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
 }
 
 /* 动画 */

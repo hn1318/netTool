@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { FRP_VERSIONS, loadStore, saveStore, STORE_KEYS } from "../api";
+import { FRP_VERSIONS, loadStore, saveStore, STORE_KEYS, downloadFrp } from "../api";
 import type { FrpPlatform } from "../types";
 
 const versions = FRP_VERSIONS;
@@ -11,6 +11,7 @@ const arch = ref<FrpPlatform["arch"]>("amd64");
 
 const downloading = ref(false);
 const progress = ref(0);
+const downloadError = ref("");
 const installed = ref(loadStore<string>(STORE_KEYS.corePath, ""));
 const downloadedVersion = ref(loadStore<string>("frp_downloaded_version", ""));
 
@@ -42,23 +43,25 @@ const downloadUrl = computed(
     `https://github.com/fatedier/frp/releases/download/${selectedVersion.value}/${fileName.value}`
 );
 
-function startDownload() {
+async function startDownload() {
   if (downloading.value) return;
   downloading.value = true;
-  progress.value = 0;
-  // 模拟下载进度
-  const timer = setInterval(() => {
-    progress.value += Math.random() * 12 + 3;
-    if (progress.value >= 100) {
-      progress.value = 100;
-      clearInterval(timer);
+  progress.value = 10;
+  downloadError.value = "";
+  try {
+    const result = await downloadFrp(selectedVersion.value, os.value, arch.value);
+    progress.value = 100;
+    installed.value = result.path;
+    downloadedVersion.value = result.version;
+    saveStore(STORE_KEYS.corePath, installed.value);
+    saveStore("frp_downloaded_version", downloadedVersion.value);
+  } catch (e) {
+    downloadError.value = String(e);
+  } finally {
+    setTimeout(() => {
       downloading.value = false;
-      installed.value = `./frp_${selectedVersion.value.slice(1)}_${os.value}_${arch.value}`;
-      downloadedVersion.value = selectedVersion.value;
-      saveStore(STORE_KEYS.corePath, installed.value);
-      saveStore("frp_downloaded_version", downloadedVersion.value);
-    }
-  }, 180);
+    }, 300);
+  }
 }
 
 function openReleasePage() {
@@ -138,6 +141,7 @@ function openReleasePage() {
             </div>
             <span class="small muted">{{ Math.floor(progress) }}%</span>
           </div>
+          <p v-if="downloadError" class="error-text">{{ downloadError }}</p>
         </div>
 
         <div class="card">
@@ -171,7 +175,7 @@ function openReleasePage() {
 }
 .layout {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 16px;
   margin-top: 20px;
 }
@@ -264,6 +268,12 @@ function openReleasePage() {
   border-radius: 4px;
   transition: width 0.2s ease;
 }
+.error-text {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 8px;
+  word-break: break-all;
+}
 .installed {
   display: flex;
   align-items: center;
@@ -293,6 +303,22 @@ function openReleasePage() {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* 响应式适配 */
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .version-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .platform-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

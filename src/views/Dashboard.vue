@@ -1,14 +1,25 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import TrafficChart from "../components/TrafficChart.vue";
-import { loadStore, startFrp, stopFrp, getFrpStatus, onFrpStatus } from "../api";
-import type { TunnelConfig } from "../types";
+import {
+  loadStore,
+  stopFrp,
+  getFrpStatus,
+  onFrpStatus,
+  runFrp,
+  getAppDataDir,
+  writeConfig,
+  tunnelsToToml,
+  STORE_KEYS,
+} from "../api";
+import type { TunnelConfig, AppSettings } from "../types";
 
-const props = defineProps<{ tunnels: TunnelConfig[]; theme?: string }>();
+const props = defineProps<{ tunnels: TunnelConfig[]; settings: AppSettings; theme?: string }>();
 
 const selectedConfig = ref(loadStore<string>("selected_config", ""));
 const running = ref(false);
 const connecting = ref(false);
+const connectError = ref("");
 
 // 流量数据
 const MAX_POINTS = 30;
@@ -75,14 +86,38 @@ function stopSimulation() {
 
 async function toggleConnection() {
   connecting.value = true;
+  connectError.value = "";
   try {
     if (running.value) {
       await stopFrp();
     } else {
-      await startFrp();
+      // 生成配置文件并启动真实 frpc
+      const frpcPath = loadStore<string>(STORE_KEYS.corePath, "");
+      if (!frpcPath) {
+        connectError.value = "尚未安装 FRP 核心，请先在「核心下载」中下载";
+        return;
+      }
+      // 生成 frpc.toml
+      const toml = await tunnelsToToml({
+        serverAddr: props.settings.serverAddr,
+        serverPort: props.settings.serverPort,
+        user: props.settings.user,
+        authToken: props.settings.authToken,
+        tunnels: props.tunnels.filter((t) => t.enabled),
+      });
+      // 写入配置文件
+      let configPath = "";
+      try {
+        const dir = await getAppDataDir();
+        configPath = `${dir}\\frpc.toml`;
+      } catch {
+        configPath = "frpc.toml";
+      }
+      await writeConfig(configPath, toml);
+      await runFrp(frpcPath, configPath);
     }
   } catch (e) {
-    console.error(e);
+    connectError.value = String(e);
   } finally {
     connecting.value = false;
   }
@@ -159,6 +194,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-if="connectError" class="connect-error">{{ connectError }}</div>
+
     <!-- 统计卡片 -->
     <div class="stats-grid">
       <div class="card stat-card">
@@ -228,19 +265,19 @@ onBeforeUnmount(() => {
       <div class="info-grid">
         <div class="info-item">
           <span class="muted small">服务器</span>
-          <span class="info-value">frp.example.com:7000</span>
+          <span class="info-value">{{ settings.serverAddr }}:{{ settings.serverPort }}</span>
         </div>
         <div class="info-item">
           <span class="muted small">协议</span>
-          <span class="info-value">TCP</span>
+          <span class="info-value">{{ settings.transport.toUpperCase() }}</span>
         </div>
         <div class="info-item">
           <span class="muted small">TLS</span>
-          <span class="info-value" style="color: var(--success)">已启用</span>
+          <span class="info-value" style="color: var(--success)">{{ settings.tlsEnable ? "已启用" : "未启用" }}</span>
         </div>
         <div class="info-item">
-          <span class="muted small">在线时长</span>
-          <span class="info-value">{{ running ? "00:12:34" : "--" }}</span>
+          <span class="muted small">活动隧道</span>
+          <span class="info-value">{{ activeTunnels }}</span>
         </div>
       </div>
     </div>
@@ -301,6 +338,14 @@ onBeforeUnmount(() => {
 }
 .status-pill.off .dot {
   background: var(--text-muted);
+}
+.connect-error {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  color: var(--danger);
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
 }
 
 .stats-grid {

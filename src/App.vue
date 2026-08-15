@@ -84,6 +84,13 @@ function addTunnel(t: TunnelConfig) {
   tunnels.value.push(t);
   persistTunnels();
 }
+function updateTunnel(t: TunnelConfig) {
+  const idx = tunnels.value.findIndex((x) => x.id === t.id);
+  if (idx >= 0) {
+    tunnels.value[idx] = t;
+    persistTunnels();
+  }
+}
 function removeTunnel(id: string) {
   tunnels.value = tunnels.value.filter((t) => t.id !== id);
   persistTunnels();
@@ -169,7 +176,12 @@ const viewMap = {
           :logs="logs"
           :user="user"
           :theme="theme"
+          :server-addr="settings.serverAddr"
+          :server-port="settings.serverPort"
+          :user-name="settings.user"
+          :auth-token="settings.authToken"
           @add="addTunnel"
+          @update-tunnel="updateTunnel"
           @remove="removeTunnel"
           @toggle="toggleTunnel"
           @update="updateSettings"
@@ -191,8 +203,15 @@ const viewMap = {
 }
 .content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 28px;
   background: var(--bg);
+}
+@media (max-width: 768px) {
+  .content {
+    padding: 16px;
+  }
 }
 </style>

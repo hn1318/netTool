@@ -10,9 +10,45 @@ export const writeConfig = (path: string, content: string) =>
 export const parseToml = (content: string) => invoke<any>("parse_toml", { content });
 export const jsonToToml = (content: string) => invoke<string>("json_to_toml", { content });
 export const listDirFiles = (path: string) => invoke<string[]>("list_dir_files", { path });
-export const startFrp = () => invoke<any>("start_frp");
-export const stopFrp = () => invoke<any>("stop_frp");
-export const getFrpStatus = () => invoke<any>("get_frp_status");
+
+// 解析 TOML 为服务器配置 + 隧道列表
+export interface ParsedToml {
+  server_addr: string | null;
+  server_port: number | null;
+  user: string | null;
+  auth_method: string | null;
+  auth_token: string | null;
+  tunnels: TunnelConfig[];
+}
+export const parseTomlTunnels = (content: string) =>
+  invoke<ParsedToml>("parse_toml_tunnels", { content });
+
+// 将服务器配置 + 隧道列表渲染为 TOML
+export const tunnelsToToml = (args: {
+  serverAddr: string;
+  serverPort: number;
+  user: string;
+  authToken: string;
+  tunnels: TunnelConfig[];
+}) => invoke<string>("tunnels_to_toml", args);
+
+// FRP 核心下载
+export interface DownloadResult {
+  path: string;
+  version: string;
+}
+export const downloadFrp = (version: string, os: string, arch: string) =>
+  invoke<DownloadResult>("download_frp", { version, os, arch });
+
+// 启动 / 停止 frpc
+export interface FrpProcessInfo {
+  pid: number;
+  running: boolean;
+}
+export const runFrp = (frpcPath: string, configPath: string) =>
+  invoke<FrpProcessInfo>("run_frp", { frpcPath, configPath });
+export const stopFrp = () => invoke<FrpProcessInfo>("stop_frp");
+export const getFrpStatus = () => invoke<FrpProcessInfo>("get_frp_status");
 export const emitLog = (level: string, message: string) =>
   invoke<void>("emit_log", { level, message });
 
@@ -49,14 +85,15 @@ export const STORE_KEYS = {
   corePath: "core_path",
 } as const;
 
-// ---- FRP 版本列表（模拟远程数据）----
+// ---- FRP 版本列表 ----
+// 真实版本数据（可通过 GitHub API 获取，这里内置常用版本，最新可更新）
 export const FRP_VERSIONS: FrpVersion[] = [
-  { version: "0.61.1", tag: "v0.61.1", publishedAt: "2025-08-02" },
-  { version: "0.61.0", tag: "v0.61.0", publishedAt: "2025-07-18" },
-  { version: "0.60.0", tag: "v0.60.0", publishedAt: "2025-06-30" },
-  { version: "0.59.1", tag: "v0.59.1", publishedAt: "2025-05-12" },
-  { version: "0.58.1", tag: "v0.58.1", publishedAt: "2025-04-25" },
-  { version: "0.57.0", tag: "v0.57.0", publishedAt: "2025-03-09" },
+  { version: "0.61.1", tag: "v0.61.1", publishedAt: "2024-11-11" },
+  { version: "0.61.0", tag: "v0.61.0", publishedAt: "2024-10-24" },
+  { version: "0.60.0", tag: "v0.60.0", publishedAt: "2024-08-20" },
+  { version: "0.59.1", tag: "v0.59.1", publishedAt: "2024-07-08" },
+  { version: "0.58.1", tag: "v0.58.1", publishedAt: "2024-04-19" },
+  { version: "0.57.0", tag: "v0.57.0", publishedAt: "2024-03-11" },
 ];
 
 // ---- 默认设置 ----

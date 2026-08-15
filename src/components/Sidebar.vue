@@ -26,7 +26,7 @@ const navWidth = computed(() => (props.collapsed ? "72px" : "220px"));
 <template>
   <aside class="sidebar" :style="{ width: navWidth }">
     <div class="logo-row" :class="{ collapsed }">
-      <div class="logo-mark">
+      <div class="logo-mark" :title="collapsed ? '点击切换亮暗主题' : ''" @click="collapsed && emit('toggle-theme')">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
           <path
             d="M12 2 4 6v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6l-8-4z"
@@ -81,7 +81,12 @@ const navWidth = computed(() => (props.collapsed ? "72px" : "220px"));
           <path d="m15 18-6-6 6-6" />
         </svg>
       </button>
-      <button class="collapse-btn theme-btn" :title="theme === 'dark' ? '切换为亮色' : '切换为暗色'" @click="emit('toggle-theme')">
+      <button
+        v-if="!collapsed"
+        class="collapse-btn theme-btn"
+        :title="theme === 'dark' ? '切换为亮色' : '切换为暗色'"
+        @click="emit('toggle-theme')"
+      >
         <svg v-if="theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4" />
           <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
@@ -123,6 +128,9 @@ const navWidth = computed(() => (props.collapsed ? "72px" : "220px"));
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+.logo-row.collapsed .logo-mark {
+  cursor: pointer;
 }
 .logo-text {
   font-size: 18px;
