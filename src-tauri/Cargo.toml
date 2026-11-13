@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,6 +27,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 zip = "2"
 flate2 = "1"
 tar = "0.4"
+base64 = "0.22"
+# OpenFrp 网页登录：Curve25519 + XSalsa20-Poly1305
+crypto_box = "0.9"
+getrandom = "0.2"
+rfd = "0.15"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

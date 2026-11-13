@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { onFrpLog, loadStore, saveStore } from "../api";
+import { ref, computed, watch, nextTick, onMounted } from "vue";
+import EmptyState from "../components/EmptyState.vue";
+import { loadStore, saveStore } from "../api";
 import type { LogEntry, LogLevel } from "../types";
 
-const props = defineProps<{ logs: LogEntry[] }>();
+const props = defineProps<{ logs: LogEntry[]; frpRunning?: boolean }>();
 const emit = defineEmits<{
-  (e: "add", entry: LogEntry): void;
   (e: "clear"): void;
 }>();
 
 const filter = ref<LogLevel | "all">(loadStore<LogLevel | "all">("log_filter", "all"));
 const search = ref("");
-const autoScroll = ref(true);
+const autoScroll = ref(loadStore<boolean>("log_autoscroll", true));
+const logView = ref<HTMLElement | null>(null);
 
 const levels: (LogLevel | "all")[] = ["all", "trace", "debug", "info", "warn", "error"];
 
@@ -34,6 +35,31 @@ function setFilter(l: LogLevel | "all") {
   filter.value = l;
   saveStore("log_filter", l);
 }
+
+function scrollToBottom() {
+  const el = logView.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function toggleAutoScroll() {
+  autoScroll.value = !autoScroll.value;
+  saveStore("log_autoscroll", autoScroll.value);
+  if (autoScroll.value) scrollToBottom();
+}
+
+// 有新日志 / 切换筛选时，若开启自动滚动则贴底
+watch(
+  () => [props.logs.length, filter.value, search.value],
+  async () => {
+    if (!autoScroll.value) return;
+    await nextTick();
+    scrollToBottom();
+  }
+);
+
+onMounted(() => {
+  if (autoScroll.value) scrollToBottom();
+});
 
 const filteredLogs = computed(() => {
   let list = props.logs;
@@ -67,19 +93,6 @@ function exportLogs() {
   a.click();
   URL.revokeObjectURL(url);
 }
-
-let unlisten: (() => void) | undefined;
-onMounted(async () => {
-  unlisten = await onFrpLog((data: any) => {
-    emit("add", {
-      id: Date.now(),
-      timestamp: data.timestamp,
-      level: data.level as LogLevel,
-      message: data.message,
-    });
-  });
-});
-onBeforeUnmount(() => unlisten?.());
 </script>
 
 <template>
@@ -87,9 +100,13 @@ onBeforeUnmount(() => unlisten?.());
     <div class="page-header flex justify-between items-center">
       <div>
         <h2>日志</h2>
-        <p class="muted small">实时运行时日志</p>
+        <p class="muted small">frpc 运行的实时日志</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 items-center">
+        <div class="live-badge" :class="{ active: frpRunning }">
+          <span class="status-dot" :class="{ on: frpRunning }"></span>
+          {{ frpRunning ? "frp 运行中" : "未运行" }}
+        </div>
         <button class="btn btn-ghost" @click="emit('clear')">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
@@ -122,7 +139,7 @@ onBeforeUnmount(() => unlisten?.());
       <div class="flex items-center gap-2" style="flex: 1">
         <input class="input search" v-model="search" placeholder="搜索日志..." />
         <label class="autoscroll">
-          <input type="checkbox" v-model="autoScroll" />
+          <input type="checkbox" :checked="autoScroll" @change="toggleAutoScroll" />
           自动滚动
         </label>
       </div>
@@ -138,7 +155,17 @@ onBeforeUnmount(() => unlisten?.());
           <span class="log-msg">{{ l.message }}</span>
         </div>
       </transition-group>
-      <div v-if="filteredLogs.length === 0" class="empty muted">暂无日志</div>
+      <div v-if="filteredLogs.length === 0" class="empty">
+        <EmptyState
+          compact
+          :title="props.logs.length ? '没有匹配的日志' : '暂无日志'"
+          :description="
+            props.logs.length
+              ? '试试切换级别或清空搜索关键词'
+              : '连接隧道后，frpc 的运行日志会实时出现在这里'
+          "
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -166,6 +193,23 @@ onBeforeUnmount(() => unlisten?.());
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.live-badge.active {
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.3);
+  background: rgba(52, 211, 153, 0.1);
 }
 .filter-btn {
   display: flex;

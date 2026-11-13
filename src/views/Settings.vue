@@ -1,135 +1,446 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import type { AppSettings } from "../types";
+import { ref, onMounted, computed } from "vue";
+import Spinner from "../components/Spinner.vue";
+import Skeleton from "../components/Skeleton.vue";
+import { toast } from "../composables/toast";
+import {
+  appearance,
+  updateAppearance,
+  imageToDataUrl,
+  DEFAULT_APPEARANCE,
+} from "../appearance";
+import {
+  getAppDataDir,
+  getInstalledCore,
+  revealPath,
+  getAppSettings,
+  saveAppSettings,
+  getStorageInfo,
+  pickDirectory,
+  applyStorageSettings,
+  getAutostart,
+  setAutostart,
+} from "../api";
+import type { InstalledCore, AppSettings, StorageInfo } from "../types";
 
-const props = defineProps<{ settings: AppSettings }>();
-const emit = defineEmits<{ (e: "update", s: AppSettings): void }>();
+defineProps<{ theme?: string; profile?: unknown }>();
+const emit = defineEmits<{
+  (e: "set-theme", t: string): void;
+}>();
 
-const form = ref<AppSettings>({ ...props.settings });
+// ============ 运行环境 ============
+const core = ref<InstalledCore | null>(null);
+const appDataDir = ref("");
+const loadingEnv = ref(true);
 
-watch(
-  () => props.settings,
-  (v) => {
-    form.value = { ...v };
-  },
-  { deep: true }
-);
+// ============ 存储位置 ============
+const storage = ref<StorageInfo | null>(null);
+const dataDirInput = ref("");
+const logDirInput = ref("");
+const migrate = ref(true);
+const applyingStorage = ref(false);
+const loadingStorage = ref(true);
 
-const saved = ref(false);
-let saveTimer: number | undefined;
+// ============ 关闭行为 ============
+const appSettings = ref<AppSettings>({ closeBehavior: "ask" });
+const closeOptions = [
+  { value: "ask", label: "每次询问", desc: "关闭时弹窗让你选择后台运行还是直接退出" },
+  { value: "tray", label: "后台运行", desc: "关闭窗口后隐藏到托盘，隧道继续运行" },
+  { value: "quit", label: "直接退出", desc: "关闭窗口即结束程序，并停止所有隧道" },
+] as const;
 
-function save() {
-  emit("update", { ...form.value });
-  saved.value = true;
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => (saved.value = false), 2000);
+// ============ 开机自启动 ============
+const autoStart = ref(false);
+const autoStartBusy = ref(false);
+
+// ============ 外观 ============
+const bgInput = ref<HTMLInputElement | null>(null);
+const uploadingBg = ref(false);
+const isDefaultBg = computed(() => !appearance.value.bgImage);
+
+function chooseBg() {
+  bgInput.value?.click();
 }
+
+async function onBgPicked(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    toast.error("请选择图片文件");
+    return;
+  }
+  uploadingBg.value = true;
+  try {
+    const dataUrl = await imageToDataUrl(file);
+    updateAppearance({ bgImage: dataUrl });
+    toast.success("背景图片已更新");
+  } catch (err) {
+    toast.error("设置背景失败", String(err));
+  } finally {
+    uploadingBg.value = false;
+    if (bgInput.value) bgInput.value.value = "";
+  }
+}
+
+function clearBg() {
+  updateAppearance({ bgImage: "" });
+  toast.info("已移除背景图片");
+}
+
+function resetAppearance() {
+  updateAppearance({ ...DEFAULT_APPEARANCE });
+  emit("set-theme", "dark");
+  toast.info("外观已恢复默认");
+}
+
+// ============ 通用 ============
+async function changeCloseBehavior(value: AppSettings["closeBehavior"]) {
+  appSettings.value = { ...appSettings.value, closeBehavior: value };
+  try {
+    appSettings.value = await saveAppSettings(appSettings.value);
+    toast.success("设置已保存", "关闭窗口行为已更新");
+  } catch (e) {
+    toast.error("保存失败", String(e));
+  }
+}
+
+async function applyStorage() {
+  applyingStorage.value = true;
+  try {
+    const msg = await applyStorageSettings({
+      dataDir: dataDirInput.value.trim() || null,
+      logDir: logDirInput.value.trim() || null,
+      migrate: migrate.value,
+    });
+    toast.success("已保存存储位置", msg);
+    const info = await getStorageInfo();
+    storage.value = info;
+    dataDirInput.value = info.dataDir;
+    logDirInput.value = info.logDir;
+  } catch (e) {
+    toast.error("保存存储位置失败", String(e));
+  } finally {
+    applyingStorage.value = false;
+  }
+}
+
+async function chooseDataDir() {
+  try {
+    const picked = await pickDirectory(dataDirInput.value);
+    if (picked) dataDirInput.value = picked;
+  } catch (e) {
+    toast.error("选择文件夹失败", String(e));
+  }
+}
+
+async function chooseLogDir() {
+  try {
+    const picked = await pickDirectory(logDirInput.value);
+    if (picked) logDirInput.value = picked;
+  } catch (e) {
+    toast.error("选择文件夹失败", String(e));
+  }
+}
+
+function resetDataDir() {
+  if (!storage.value) return;
+  dataDirInput.value = storage.value.defaultDataDir;
+}
+
+function resetLogDir() {
+  if (!storage.value) return;
+  logDirInput.value = storage.value.defaultLogDir;
+}
+
+async function toggleAutostart() {
+  if (autoStartBusy.value) return;
+  autoStartBusy.value = true;
+  try {
+    const next = !autoStart.value;
+    const msg = await setAutostart(next);
+    autoStart.value = next;
+    toast.success(next ? "已开启开机自启动" : "已关闭开机自启动", msg);
+  } catch (e) {
+    toast.error("设置开机自启动失败", String(e));
+  } finally {
+    autoStartBusy.value = false;
+  }
+}
+
+async function openDataDir() {
+  try {
+    await revealPath(dataDirInput.value || storage.value?.dataDir || "");
+  } catch {
+    /* 忽略 */
+  }
+}
+
+async function openCoreDir() {
+  try {
+    if (core.value?.path) await revealPath(core.value.path);
+    else await revealPath(appDataDir.value);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+onMounted(async () => {
+  try {
+    appDataDir.value = await getAppDataDir();
+  } catch {
+    /* 忽略 */
+  }
+  try {
+    core.value = await getInstalledCore();
+  } catch {
+    /* 忽略 */
+  }
+  try {
+    appSettings.value = await getAppSettings();
+  } catch {
+    /* 忽略 */
+  }
+  loadingEnv.value = false;
+
+  try {
+    storage.value = await getStorageInfo();
+    dataDirInput.value = storage.value.dataDir;
+    logDirInput.value = storage.value.logDir;
+  } catch (e) {
+    console.error(e);
+  }
+  loadingStorage.value = false;
+
+  try {
+    autoStart.value = await getAutostart();
+  } catch {
+    /* 忽略 */
+  }
+});
 </script>
 
 <template>
   <div class="settings">
-    <div class="page-header flex justify-between items-center">
-      <div>
-        <h2>设置</h2>
-        <p class="muted small">配置 FRP 常用参数</p>
-      </div>
-      <button class="btn btn-primary" @click="save">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-          <path d="M17 21v-8H7v8M7 3v5h8" />
-        </svg>
-        保存
-      </button>
+    <div class="page-header">
+      <h2>设置</h2>
+      <p class="muted small">外观、存储位置、启动行为与运行环境</p>
     </div>
-    <transition name="fade">
-      <div v-if="saved" class="save-toast">设置已保存</div>
-    </transition>
 
     <div class="settings-grid">
-      <!-- 服务器配置 -->
+      <!-- 外观 -->
       <div class="card section">
-        <h3 class="section-title">服务器连接</h3>
-        <div class="form-grid">
-          <div class="field">
-            <label>服务器地址 (serverAddr)</label>
-            <input class="input" v-model="form.serverAddr" />
+        <div class="section-head">
+          <h3 class="section-title">外观</h3>
+          <button class="btn btn-ghost btn-sm" @click="resetAppearance">恢复默认</button>
+        </div>
+
+        <div class="option-row">
+          <div>
+            <div class="option-label">界面主题</div>
+            <div class="muted small">浅色或深色</div>
           </div>
-          <div class="field">
-            <label>服务器端口 (serverPort)</label>
-            <input class="input" type="number" v-model.number="form.serverPort" />
+          <div class="segmented">
+            <button :class="{ active: theme === 'dark' }" @click="emit('set-theme', 'dark')">深色</button>
+            <button :class="{ active: theme === 'light' }" @click="emit('set-theme', 'light')">浅色</button>
           </div>
-          <div class="field">
-            <label>传输协议 (transport)</label>
-            <select class="select" v-model="form.transport">
-              <option value="tcp">tcp</option>
-              <option value="kcp">kcp</option>
-              <option value="websocket">websocket</option>
-            </select>
+        </div>
+
+        <div class="option-row">
+          <div>
+            <div class="option-label">背景图片</div>
+            <div class="muted small">支持 JPG / PNG / WebP，自动压缩后保存在本地</div>
           </div>
-          <div class="field">
-            <label>认证令牌 (auth.token)</label>
-            <input class="input" type="password" v-model="form.authToken" placeholder="可选" />
+          <div class="flex gap-2">
+            <input ref="bgInput" type="file" accept="image/*" class="hidden-input" @change="onBgPicked" />
+            <button class="btn btn-ghost btn-sm" :disabled="uploadingBg" @click="chooseBg">
+              <Spinner v-if="uploadingBg" :size="12" :width="2" />
+              {{ uploadingBg ? "处理中" : appearance.bgImage ? "更换图片" : "选择图片" }}
+            </button>
+            <button v-if="!isDefaultBg" class="btn btn-ghost btn-sm" @click="clearBg">移除</button>
           </div>
-          <div class="field">
-            <label>用户 (user)</label>
-            <input class="input" v-model="form.user" />
+        </div>
+
+        <div v-if="appearance.bgImage" class="bg-preview">
+          <img :src="appearance.bgImage" alt="背景预览" />
+          <div class="bg-mask-slider">
+            <span class="muted small">遮罩浓度</span>
+            <input
+              type="range"
+              min="0"
+              max="0.8"
+              step="0.05"
+              :value="appearance.bgMask"
+              @input="updateAppearance({ bgMask: Number(($event.target as HTMLInputElement).value) })"
+            />
+            <span class="small">{{ Math.round(appearance.bgMask * 100) }}%</span>
           </div>
-          <div class="field">
-            <label>TLS 加密</label>
-            <label class="switch">
-              <input type="checkbox" v-model="form.tlsEnable" />
-              <span class="slider"></span>
-            </label>
+        </div>
+
+        <div class="option-row slider-row">
+          <div>
+            <div class="option-label">圆角尺寸</div>
+            <div class="muted small">0 为直角，最大 24px</div>
+          </div>
+          <div class="slider-control">
+            <input
+              type="range"
+              min="0"
+              max="24"
+              step="1"
+              :value="appearance.radius"
+              @input="updateAppearance({ radius: Number(($event.target as HTMLInputElement).value) })"
+            />
+            <span class="value-pill">{{ appearance.radius }}px</span>
+          </div>
+        </div>
+
+        <div class="option-row">
+          <div>
+            <div class="option-label">磨砂玻璃</div>
+            <div class="muted small">卡片与侧栏使用半透明模糊效果</div>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              :checked="appearance.glass"
+              @change="updateAppearance({ glass: ($event.target as HTMLInputElement).checked })"
+            />
+            <span class="slider-switch"></span>
+          </label>
+        </div>
+
+        <div class="option-row slider-row" :class="{ disabled: !appearance.glass }">
+          <div>
+            <div class="option-label">模糊强度</div>
+            <div class="muted small">仅在开启磨砂玻璃时生效</div>
+          </div>
+          <div class="slider-control">
+            <input
+              type="range"
+              min="0"
+              max="40"
+              step="1"
+              :disabled="!appearance.glass"
+              :value="appearance.blur"
+              @input="updateAppearance({ blur: Number(($event.target as HTMLInputElement).value) })"
+            />
+            <span class="value-pill">{{ appearance.blur }}px</span>
           </div>
         </div>
       </div>
 
-      <!-- 日志配置 -->
+      <!-- 存储位置 -->
       <div class="card section">
-        <h3 class="section-title">日志配置</h3>
-        <div class="form-grid">
-          <div class="field">
-            <label>日志级别 (log.level)</label>
-            <select class="select" v-model="form.logLevel">
-              <option value="trace">trace</option>
-              <option value="debug">debug</option>
-              <option value="info">info</option>
-              <option value="warn">warn</option>
-              <option value="error">error</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>日志文件 (log.to)</label>
-            <input class="input" v-model="form.logFile" />
-          </div>
-          <div class="field">
-            <label>日志保留天数 (log.maxDays)</label>
-            <input class="input" type="number" v-model.number="form.logMaxDays" />
-          </div>
+        <div class="section-head">
+          <h3 class="section-title">存储位置</h3>
+          <label class="migrate-check">
+            <input type="checkbox" v-model="migrate" />
+            迁移现有文件
+          </label>
         </div>
+        <p class="muted small section-note">
+          数据和日志目录会在重启后生效；应用前可选择是否把现有文件迁移到新目录。
+        </p>
+
+        <div v-if="loadingStorage" class="storage-skeleton">
+          <Skeleton width="100%" height="38px" radius="8px" />
+          <Skeleton width="100%" height="38px" radius="8px" />
+        </div>
+        <template v-else>
+          <div class="storage-row">
+            <div class="storage-label">数据存储位置</div>
+            <input class="input storage-input" v-model="dataDirInput" readonly />
+            <button class="btn btn-ghost btn-sm" @click="chooseDataDir">选择文件夹</button>
+            <button class="btn btn-ghost btn-sm" @click="resetDataDir">恢复默认</button>
+          </div>
+          <div class="storage-row">
+            <div class="storage-label">日志文件位置</div>
+            <input class="input storage-input" v-model="logDirInput" readonly />
+            <button class="btn btn-ghost btn-sm" @click="chooseLogDir">选择文件夹</button>
+            <button class="btn btn-ghost btn-sm" @click="resetLogDir">恢复默认</button>
+          </div>
+
+          <div class="storage-actions">
+            <button class="btn btn-primary btn-sm" :disabled="applyingStorage" @click="applyStorage">
+              <Spinner v-if="applyingStorage" :size="12" :width="2" />
+              {{ applyingStorage ? "应用中" : "应用存储位置" }}
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="openDataDir">打开数据目录</button>
+          </div>
+        </template>
       </div>
 
-      <!-- Web 控制台 -->
+      <!-- 启动与关闭 -->
       <div class="card section">
-        <h3 class="section-title">Web 控制台 (webServer)</h3>
-        <div class="form-grid">
-          <div class="field">
-            <label>监听地址 (addr)</label>
-            <input class="input" v-model="form.dashboardAddr" />
+        <h3 class="section-title">启动与关闭</h3>
+
+        <div class="option-row">
+          <div>
+            <div class="option-label">开机自启动</div>
+            <div class="muted small">Windows 登录系统后自动启动 NetTool</div>
           </div>
-          <div class="field">
-            <label>端口 (port)</label>
-            <input class="input" type="number" v-model.number="form.dashboardPort" />
+          <label class="switch">
+            <input type="checkbox" :checked="autoStart" :disabled="autoStartBusy" @change="toggleAutostart" />
+            <span class="slider-switch"></span>
+          </label>
+        </div>
+
+        <div class="radio-list">
+          <label
+            v-for="opt in closeOptions"
+            :key="opt.value"
+            class="radio-item"
+            :class="{ active: appSettings.closeBehavior === opt.value }"
+          >
+            <input
+              type="radio"
+              name="close-behavior"
+              :value="opt.value"
+              :checked="appSettings.closeBehavior === opt.value"
+              @change="changeCloseBehavior(opt.value)"
+            />
+            <div class="radio-text">
+              <div class="radio-title">{{ opt.label }}</div>
+              <div class="muted small">{{ opt.desc }}</div>
+            </div>
+          </label>
+        </div>
+        <p class="muted small">后台运行时可通过托盘图标重新打开主界面，右键托盘菜单可退出程序。</p>
+      </div>
+
+      <!-- 运行环境 -->
+      <div class="card section">
+        <h3 class="section-title">运行环境</h3>
+        <div class="env-grid">
+          <div class="env-item">
+            <span class="muted small">frpc 核心</span>
+            <Skeleton v-if="loadingEnv" width="85%" height="11px" />
+            <span v-else class="mono small">{{ core?.path || "未安装" }}</span>
           </div>
-          <div class="field">
-            <label>用户名 (user)</label>
-            <input class="input" v-model="form.dashboardUser" />
+          <div class="env-item">
+            <span class="muted small">核心版本</span>
+            <Skeleton v-if="loadingEnv" width="60px" height="11px" />
+            <span v-else class="small">{{ core?.version || "未安装" }}</span>
           </div>
-          <div class="field">
-            <label>密码 (password)</label>
-            <input class="input" type="password" v-model="form.dashboardPwd" />
+          <div class="env-item">
+            <span class="muted small">适用平台</span>
+            <Skeleton v-if="loadingEnv" width="90px" height="11px" />
+            <span v-else class="small">{{ core ? `${core.os} / ${core.arch}` : "-" }}</span>
+          </div>
+          <div class="env-item">
+            <span class="muted small">应用标识</span>
+            <span class="small mono">top.hn3.nettool</span>
           </div>
         </div>
+        <div class="flex gap-2 mt-4">
+          <button class="btn btn-ghost btn-sm" @click="openCoreDir">
+            <Spinner v-if="loadingEnv" :size="12" :width="2" />
+            打开核心目录
+          </button>
+        </div>
+        <p class="muted small mt-2">
+          服务器地址、认证令牌等连接参数请在「配置管理」中编辑。
+        </p>
       </div>
     </div>
   </div>
@@ -137,8 +448,7 @@ function save() {
 
 <style scoped>
 .settings {
-  animation: fadeUp 0.4s ease;
-  position: relative;
+  animation: fadeUp 0.35s ease;
 }
 .page-header h2 {
   font-size: 20px;
@@ -149,37 +459,168 @@ function save() {
   flex-direction: column;
   gap: 16px;
   margin-top: 20px;
-  max-width: 860px;
+  max-width: 920px;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .section-title {
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
 }
-.form-grid {
+.section-note {
+  margin: -4px 0 14px;
+  line-height: 1.7;
+}
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 0;
+}
+.option-row + .option-row {
+  border-top: 1px dashed var(--border);
+}
+.option-row.disabled {
+  opacity: 0.55;
+}
+.option-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+.segmented button {
+  padding: 5px 16px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.segmented button.active {
+  background: var(--primary);
+  color: #fff;
+}
+.hidden-input {
+  display: none;
+}
+.bg-preview {
+  margin: 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.bg-preview img {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}
+.bg-mask-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.slider-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.slider-control input[type="range"],
+.bg-mask-slider input[type="range"] {
+  flex: 1;
+  accent-color: var(--primary);
+}
+.value-pill {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.migrate-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.migrate-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+}
+.storage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.storage-label {
+  width: 104px;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.storage-input {
+  flex: 1;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+}
+.storage-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.storage-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.env-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
-.save-toast {
-  position: fixed;
-  top: 20px;
-  right: 24px;
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--success);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  z-index: 200;
+.env-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
+.mono {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  word-break: break-all;
+}
+/* 开关 */
 .switch {
   position: relative;
   display: inline-block;
   width: 42px;
   height: 24px;
+  flex-shrink: 0;
   cursor: pointer;
 }
 .switch input {
@@ -187,14 +628,14 @@ function save() {
   width: 0;
   height: 0;
 }
-.slider {
+.slider-switch {
   position: absolute;
   inset: 0;
   background: var(--border);
   border-radius: 24px;
-  transition: 0.3s;
+  transition: 0.25s;
 }
-.slider::before {
+.slider-switch::before {
   content: "";
   position: absolute;
   width: 18px;
@@ -203,26 +644,57 @@ function save() {
   top: 3px;
   background: #fff;
   border-radius: 50%;
-  transition: 0.3s;
+  transition: 0.25s;
 }
-.switch input:checked + .slider {
+.switch input:checked + .slider-switch {
   background: var(--primary);
 }
-.switch input:checked + .slider::before {
+.switch input:checked + .slider-switch::before {
   transform: translateX(18px);
 }
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s;
+.radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 10px;
 }
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.radio-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.radio-item:hover {
+  border-color: var(--border-light);
+}
+.radio-item.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.radio-item input {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+}
+.radio-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.radio-title {
+  font-size: 13px;
+  font-weight: 600;
 }
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;

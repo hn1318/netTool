@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
+import Spinner from "../components/Spinner.vue";
 import type { UserInfo } from "../types";
 
 const props = defineProps<{ user: UserInfo; theme: string }>();
@@ -9,13 +10,18 @@ const emit = defineEmits<{
 }>();
 
 const form = ref<UserInfo>({ ...props.user });
+const saving = ref(false);
+const hasProfile = computed(() => !!(form.value.nickname.trim() || form.value.email.trim()));
 
 const lang = ref(localStorage.getItem("nettool_lang") || "zh-CN");
 const autoStart = ref(localStorage.getItem("nettool_autostart") === "true");
 const minimizeToTray = ref(localStorage.getItem("nettool_tray") === "true");
 
-function saveProfile() {
+async function saveProfile() {
+  saving.value = true;
   emit("update-user", { ...form.value });
+  // 仅做一次短暂的保存反馈，数据仍然保存在本地 localStorage
+  window.setTimeout(() => (saving.value = false), 500);
 }
 
 function setTheme(t: string) {
@@ -43,14 +49,24 @@ function toggleTray() {
     </div>
 
     <div class="profile-card card">
-      <div class="avatar" :style="{ background: form.avatar || 'linear-gradient(135deg,#4f8cff,#34d399)' }">
-        {{ form.nickname.slice(0, 1).toUpperCase() }}
+      <div
+        class="avatar"
+        :style="{ background: form.avatar || 'linear-gradient(135deg,#4f8cff,#34d399)' }"
+      >
+        {{ (form.nickname || "?").slice(0, 1).toUpperCase() }}
       </div>
       <div class="profile-info">
-        <div class="nickname">{{ form.nickname }}</div>
-        <div class="muted small">{{ form.email }}</div>
+        <div class="nickname">{{ form.nickname || "未填写昵称" }}</div>
+        <div class="muted small">{{ form.email || "这是本地资料，不会上传到任何服务器" }}</div>
       </div>
-      <span class="badge" style="background: rgba(52,211,153,.15); color: #34d399">{{ form.plan }}</span>
+      <span
+        v-if="form.plan"
+        class="badge"
+        style="background: rgba(52,211,153,.15); color: #34d399"
+      >
+        {{ form.plan }}
+      </span>
+      <span v-else class="badge badge-empty">本地</span>
     </div>
 
     <div class="columns">
@@ -68,24 +84,28 @@ function toggleTray() {
           </div>
           <div class="field">
             <label>订阅套餐</label>
-            <input class="input" v-model="form.plan" disabled />
+            <input class="input" v-model="form.plan" placeholder="可选" />
           </div>
           <div class="field">
             <label>到期时间</label>
-            <input class="input" v-model="form.expireAt" disabled />
+            <input class="input" v-model="form.expireAt" placeholder="可选" />
           </div>
         </div>
-        <div class="mt-4">
-          <button class="btn btn-primary" @click="saveProfile">保存资料</button>
+        <div class="mt-4 flex items-center gap-3">
+          <button class="btn btn-primary" :disabled="saving" @click="saveProfile">
+            <Spinner v-if="saving" :size="13" :width="2" />
+            {{ saving ? "已保存" : "保存资料" }}
+          </button>
+          <span v-if="!hasProfile" class="muted small">填写昵称后，头像与资料卡会自动更新</span>
         </div>
         <div class="usage mt-6">
           <div class="flex justify-between small">
-            <span class="muted">带宽用量</span>
-            <span>{{ form.bandwidth }}</span>
+            <span class="muted">带宽限制</span>
+            <span>{{ form.bandwidth || "未设置" }}</span>
           </div>
-          <div class="progress-bar mt-2">
-            <div class="progress-fill" style="width: 62%"></div>
-          </div>
+          <p class="muted small usage-note">
+            带宽与套餐信息由 FRP 服务商提供；这里只保存本地展示资料，不参与连接鉴权。
+          </p>
         </div>
       </div>
 
@@ -176,6 +196,15 @@ function toggleTray() {
 }
 .profile-info {
   flex: 1;
+  min-width: 0;
+}
+.badge-empty {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+.usage-note {
+  line-height: 1.7;
+  margin-top: 6px;
 }
 .columns {
   display: grid;

@@ -68,6 +68,11 @@ function openTauriSite() {
 .about {
   animation: fadeUp 0.4s ease;
   max-width: 720px;
+  margin: 0 auto;
+  min-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 .hero {
   text-align: center;
