@@ -317,7 +317,9 @@ pub fn profile(
     }
 
     for id in ids {
-        let body = serde_json::json!({ "proxyId": id, "format": "toml" });
+        // 官方 SDK：proxyId 必须是整数，字符串会被服务端判为「无效的请求数据」
+        let proxy_id: i64 = id.parse().map_err(|_| format!("隧道 ID 非法：{id}"))?;
+        let body = serde_json::json!({ "proxyId": proxy_id, "format": "toml" });
         let data = post("/auth/proxy/config", token, body)?;
         let cfg = data
             .get("config")
@@ -451,6 +453,36 @@ mod tests {
                     "错误信息不符合预期: {e}"
                 );
             }
+        }
+    }
+
+    /// 真实账号冒烟：拉取第一条隧道的配置并组装 Profile（需 MEFRP_TOKEN）
+    #[test]
+    fn live_config_builds_profile() {
+        let Ok(token) = std::env::var("MEFRP_TOKEN") else {
+            return;
+        };
+        let Ok(list) = tunnels(&token) else {
+            return;
+        };
+        let Some(first) = list.first() else {
+            println!("账号下没有隧道，跳过");
+            return;
+        };
+        println!("tunnel id={} name={}", first.id, first.name);
+        match profile(&token, &[first.id.clone()], None, "mefrp") {
+            Ok(p) => {
+                println!(
+                    "profile ok: {} server={}:{} tunnels={} authTokenLen={}",
+                    p.name,
+                    p.server_addr,
+                    p.server_port,
+                    p.tunnels.len(),
+                    p.auth_token.len()
+                );
+                assert!(!p.tunnels.is_empty());
+            }
+            Err(e) => panic!("配置获取失败: {e}"),
         }
     }
 }

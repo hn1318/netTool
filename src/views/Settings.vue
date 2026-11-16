@@ -261,10 +261,31 @@ onMounted(async () => {
         </div>
 
         <div v-if="appearance.bgImage" class="bg-preview">
-          <img :src="appearance.bgImage" alt="背景预览" />
-          <div class="bg-mask-slider">
-            <span class="muted small">遮罩浓度</span>
+          <div
+            class="bg-preview-stage"
+            :class="{
+              contain: appearance.bgFit === 'contain',
+              stretch: appearance.bgFit === 'stretch',
+            }"
+          >
+            <img :src="appearance.bgImage" alt="背景预览" />
+          </div>
+          <div class="bg-preview-bar">
+            <span class="muted small">显示方式</span>
+            <div class="segmented compact">
+              <button :class="{ active: appearance.bgFit === 'fill' }" @click="updateAppearance({ bgFit: 'fill' })">
+                等比例铺满
+              </button>
+              <button :class="{ active: appearance.bgFit === 'contain' }" @click="updateAppearance({ bgFit: 'contain' })">
+                完整显示
+              </button>
+              <button :class="{ active: appearance.bgFit === 'stretch' }" @click="updateAppearance({ bgFit: 'stretch' })">
+                拉伸
+              </button>
+            </div>
+            <span class="muted small bg-mask-label">遮罩浓度</span>
             <input
+              class="bg-mask-range"
               type="range"
               min="0"
               max="0.8"
@@ -272,7 +293,7 @@ onMounted(async () => {
               :value="appearance.bgMask"
               @input="updateAppearance({ bgMask: Number(($event.target as HTMLInputElement).value) })"
             />
-            <span class="small">{{ Math.round(appearance.bgMask * 100) }}%</span>
+            <span class="value-pill">{{ Math.round(appearance.bgMask * 100) }}%</span>
           </div>
         </div>
 
@@ -312,19 +333,24 @@ onMounted(async () => {
         <div class="option-row slider-row" :class="{ disabled: !appearance.glass }">
           <div>
             <div class="option-label">模糊强度</div>
-            <div class="muted small">仅在开启磨砂玻璃时生效</div>
+            <div class="muted small">高斯模糊半径，越大越接近亚克力磨砂</div>
           </div>
           <div class="slider-control">
             <input
               type="range"
               min="0"
-              max="40"
+              max="60"
               step="1"
               :disabled="!appearance.glass"
               :value="appearance.blur"
               @input="updateAppearance({ blur: Number(($event.target as HTMLInputElement).value) })"
             />
             <span class="value-pill">{{ appearance.blur }}px</span>
+            <span
+              class="blur-dot"
+              :style="{ filter: `blur(${Math.min(appearance.blur, 20)}px)` }"
+              aria-hidden="true"
+            ></span>
           </div>
         </div>
       </div>
@@ -523,18 +549,46 @@ onMounted(async () => {
   overflow: hidden;
   background: var(--bg-elevated);
 }
-.bg-preview img {
+/* 预览区按 16:9 等比例缩放，完整展示整张图片 */
+.bg-preview-stage {
+  aspect-ratio: 16 / 9;
+  max-height: 220px;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  overflow: hidden;
+}.bg-preview-stage img {
   display: block;
   width: 100%;
-  max-height: 160px;
+  height: 100%;
+  /* 默认等比例裁切（cover），不再压缩变形 */
   object-fit: cover;
 }
-.bg-mask-slider {
+.bg-preview-stage.contain img {
+  object-fit: contain;
+}
+.bg-preview-stage.stretch img {
+  object-fit: fill;
+}
+.bg-preview-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid var(--border);
+}
+.bg-mask-label {
+  margin-left: 6px;
+}
+.bg-mask-range {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--primary);
+}
+.segmented.compact button {
+  padding: 3px 10px;
+  font-size: 12px;
 }
 .slider-control {
   display: flex;
@@ -542,8 +596,7 @@ onMounted(async () => {
   gap: 10px;
   min-width: 220px;
 }
-.slider-control input[type="range"],
-.bg-mask-slider input[type="range"] {
+.slider-control input[type="range"] {
   flex: 1;
   accent-color: var(--primary);
 }
@@ -557,6 +610,13 @@ onMounted(async () => {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 2px 8px;
+}
+.blur-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--primary), var(--text-secondary));
 }
 .migrate-check {
   display: inline-flex;

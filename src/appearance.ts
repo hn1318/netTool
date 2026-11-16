@@ -11,6 +11,8 @@ export interface Appearance {
   bgImage: string;
   /** 背景遮罩浓度 0~0.85，越大越暗 */
   bgMask: number;
+  /** 背景图填充方式：fill 等比例铺满（裁切）/ contain 等比例完整显示 / stretch 拉伸 */
+  bgFit: "fill" | "contain" | "stretch";
 }
 
 const KEY = "nettool_appearance";
@@ -21,6 +23,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   blur: 18,
   bgImage: "",
   bgMask: 0.45,
+  bgFit: "fill",
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -31,9 +34,10 @@ export function sanitize(a: Appearance): Appearance {
   return {
     radius: clamp(Math.round(Number(a.radius) || 0), 0, 24),
     glass: !!a.glass,
-    blur: clamp(Math.round(Number(a.blur) || 0), 0, 40),
+    blur: clamp(Math.round(Number(a.blur) || 0), 0, 60),
     bgImage: typeof a.bgImage === "string" ? a.bgImage : "",
     bgMask: clamp(Number(a.bgMask) || 0, 0, 0.85),
+    bgFit: a.bgFit === "contain" || a.bgFit === "stretch" ? a.bgFit : "fill",
   };
 }
 
@@ -62,11 +66,16 @@ export function applyAppearance(input?: Appearance) {
   const a = sanitize(input ?? appearance.value);
   appearance.value = a;
   const root = document.documentElement;
+  const blur = `${a.blur}px`;
   root.style.setProperty("--radius", `${a.radius}px`);
   root.style.setProperty("--radius-sm", `${Math.max(2, Math.round(a.radius * 0.6))}px`);
   root.style.setProperty("--radius-lg", `${Math.round(a.radius * 1.25)}px`);
-  root.style.setProperty("--glass-blur", `${a.blur}px`);
-  root.style.setProperty("--app-bg-mask", String(a.bgMask));
+  // 模糊强度直接写成样式字符串：Chromium 对自定义属性里的长度不支持 calc() 再计算
+  root.style.setProperty("--glass-blur", blur);
+  root.style.setProperty("--glass-filter", `blur(${blur}) saturate(165%)`);
+  // 旧版本使用过 --glass-blur 变量，这里同步更新以保证向后兼容
+  root.style.setProperty("--glass-blur", blur);  root.style.setProperty("--app-bg-mask", String(a.bgMask));
+  root.dataset.bgFit = a.bgFit;
   root.classList.toggle("glass", a.glass);
   if (a.bgImage) {
     root.style.setProperty("--app-bg-image", `url("${a.bgImage}")`);
@@ -109,3 +118,7 @@ export function imageToDataUrl(file: File, maxSize = 1920): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+
+
+

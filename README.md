@@ -45,6 +45,26 @@ pnpm tauri build    # 生产构建
 cd src-tauri && cargo test    # 后端单元测试
 ```
 
+## 发布（CI/CD）
+
+已配置 GitHub Actions 流水线，**推送 tag 即发布新版本**：
+
+| 工作流 | 触发 | 作用 |
+| --- | --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | push 到 `master`/`main`、PR | 类型检查 + 前端构建 + 后端单测 + release 构建（预热 rust 缓存） |
+| [`release.yml`](.github/workflows/release.yml) | 推送 `v*` tag、手动运行 | 校验版本号 → 打包 `.msi` / `-setup.exe` → 创建 GitHub Release |
+
+发布步骤（版本号需同时改 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`）：
+
+```bash
+git commit -am "chore(release): v0.1.1"
+git push origin master
+git tag v0.1.1
+git push origin v0.1.1     # 触发 release.yml
+```
+
+更细的说明（含失败排查、updater 签名配置）见 [.github/RELEASING.md](.github/RELEASING.md)。
+
 ## 使用说明
 
 ### 1. 安装 FRP 核心

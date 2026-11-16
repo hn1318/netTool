@@ -22,8 +22,14 @@
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   /* 外观（由 appearance.ts 动态覆盖） */
   --glass-blur: 18px;
-  --glass-bg: rgba(22, 27, 36, 0.62);
+  --glass-filter: blur(18px) saturate(165%);
+  --glass-bg: rgba(24, 29, 38, 0.58);
   --glass-bg-strong: rgba(22, 27, 36, 0.82);
+  /* 亚克力噪点（内联 SVG，避免额外请求） */
+  --noise-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  --toast-bg: rgba(24, 29, 38, 0.97);
+  --toast-border: rgba(255, 255, 255, 0.14);
+  --toast-muted: #c2c9d4;
   --app-bg-mask: 0.45;
   --app-mask-rgb: 8, 10, 14;
 }
@@ -49,6 +55,9 @@
   --shadow: 0 2px 10px rgba(30, 41, 59, 0.07);
   --glass-bg: rgba(255, 255, 255, 0.62);
   --glass-bg-strong: rgba(255, 255, 255, 0.85);
+  --toast-bg: rgba(255, 255, 255, 0.985);
+  --toast-border: rgba(15, 23, 42, 0.12);
+  --toast-muted: #4d5766;
   --app-mask-rgb: 244, 246, 250;
 }
 
@@ -78,24 +87,44 @@ body {
 }
 
 /* ============ 自定义背景图 ============ */
+/* 由 appearance.ts 写入 --app-bg-image 与 html[data-bg-fit] */
+html.has-bg {
+  --app-bg-size: cover;
+  --app-bg-repeat: no-repeat;
+}
+html.has-bg[data-bg-fit="contain"] {
+  --app-bg-size: contain;
+  --app-bg-repeat: no-repeat;
+}
+html.has-bg[data-bg-fit="stretch"] {
+  --app-bg-size: 100% 100%;
+  --app-bg-repeat: no-repeat;
+}
+/* contain 模式下用主题底色填充留白 */
+html.has-bg[data-bg-fit="contain"] body,
+html.has-bg[data-bg-fit="stretch"] body {
+  background-color: var(--bg);
+}
 html.has-bg body {
   background-image: linear-gradient(
       rgba(var(--app-mask-rgb), var(--app-bg-mask)),
       rgba(var(--app-mask-rgb), var(--app-bg-mask))
     ),
     var(--app-bg-image);
-  background-size: cover;
+  background-size: var(--app-bg-size);
   background-position: center;
+  background-repeat: var(--app-bg-repeat);
   background-attachment: fixed;
-  background-repeat: no-repeat;
 }
 html.has-bg .app-shell,
 html.has-bg .content {
   background: transparent !important;
 }
 
-/* ============ 磨砂玻璃 ============ */
-html.glass {
+/* ============ 磨砂玻璃（亚克力质感） ============ */
+/* 用 html[data-theme].glass 提高优先级，确保亮色主题也能覆盖 :root[data-theme="light"] */
+html.glass,
+html.glass[data-theme] {
   --bg-card: var(--glass-bg);
   --bg-elevated: rgba(255, 255, 255, 0.05);
   --bg-hover: rgba(255, 255, 255, 0.07);
@@ -103,25 +132,69 @@ html.glass {
   --border-light: rgba(255, 255, 255, 0.16);
 }
 html.glass[data-theme="light"] {
-  --bg-elevated: rgba(255, 255, 255, 0.55);
+  --bg-card: var(--glass-bg);
+  --bg-elevated: rgba(255, 255, 255, 0.5);
   --bg-hover: rgba(15, 23, 42, 0.05);
-  --border: rgba(15, 23, 42, 0.08);
-  --border-light: rgba(15, 23, 42, 0.14);
+  --border: rgba(15, 23, 42, 0.09);
+  --border-light: rgba(15, 23, 42, 0.16);
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 8px 24px rgba(30, 41, 59, 0.1);
 }
+/* 亚克力：半透明底色 + 高斯模糊 + 高饱和 + 细噪点 + 顶部高光边 */
 html.glass .card,
 html.glass .modal,
 html.glass .close-dialog,
-html.glass .sidebar,
 html.glass .toolbar,
 html.glass .log-view {
-  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border, var(--border));
+  box-shadow: var(--glass-shadow, var(--shadow));
+}
+html.glass[data-theme="dark"] {
+  --glass-bg: rgba(24, 29, 38, 0.58);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 8px 28px rgba(0, 0, 0, 0.24);
+}
+
+/* 噪点纹理：让模糊表面更接近 Windows 亚克力材质 */
+html.glass .card::after,
+html.glass .toolbar::after,
+html.glass .log-view::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: var(--noise-url);
+  background-size: 180px 180px;
+  opacity: 0.45;
+  mix-blend-mode: overlay;
+}
+html.glass .card,
+html.glass .toolbar,
+html.glass .log-view {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+html.glass .card > *,
+html.glass .toolbar > *,
+html.glass .log-view > * {
+  position: relative;
+  z-index: 1;
 }
 html.glass .sidebar {
-  background: rgba(15, 19, 26, 0.55);
+  background: rgba(15, 19, 26, 0.52);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 html.glass[data-theme="light"] .sidebar {
   background: rgba(255, 255, 255, 0.55);
+  border-right: 1px solid rgba(15, 23, 42, 0.06);
 }
 html.glass .input,
 html.glass .select {
@@ -269,18 +342,27 @@ textarea {
   letter-spacing: 0.3px;
 }
 
-/* 视图切换动画 */
+/* 视图切换动画
+ * 注意：切换期间不要加 transform / opacity 过渡到带 backdrop-filter 的容器上。
+ * Chromium 在合成层发生 transform 或透明度变化时会重新采样 backdrop-filter，
+ * 表现为「模糊效果顿一下」。这里改为纯淡入淡出，并对模糊层单独提升为合成层。
+ */
 .view-enter-active,
 .view-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.16s ease;
 }
-.view-enter-from {
-  opacity: 0;
-  transform: translateY(12px);
-}
+.view-enter-from,
 .view-leave-to {
   opacity: 0;
-  transform: translateY(-12px);
+}
+
+/* 让开启磨砂玻璃的卡片保持在合成层，页面切换时不必重新栅格化 */
+html.glass .card,
+html.glass .toolbar,
+html.glass .sidebar {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* 工具类 */
@@ -455,4 +537,6 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+
 

@@ -1,0 +1,73 @@
+name: ci
+
+# 预热 release.yml 使用的 rust-cache，并对每次推送做一次完整校验。
+#
+# GitHub 的缓存按创建它的 ref 隔离：`refs/tags/v0.1.1` 写的缓存对
+# `refs/tags/v0.1.2` 不可见，所以每次打 tag 都会把整个依赖树从零编译一遍。
+# 在默认分支上按 lockfile 变更构建一次 release profile，可以让每个 tag 运行
+# 都能恢复一份已经编译好的 `src-tauri/target`。
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 与 release.yml 使用同一份 `workspaces` 映射，两个 job 命中同一个缓存。
+      # 只有默认分支负责写入，PR 只恢复不污染。
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `generate_context!` 会内嵌 `frontendDist`，因此必须先产出前端产物。
+      # 这一步同时包含 `vue-tsc --noEmit` 类型检查。
+      - name: Type-check and build frontend
+        run: pnpm build
+
+      - name: Backend unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      # 刻意使用 release profile：只有这个产物能被 release job 复用，
+      # debug 构建会写进另一个 target 子目录。
+      - name: Warm release artifacts
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml

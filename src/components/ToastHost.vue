@@ -55,16 +55,16 @@ const icons: Record<ToastType, string> = {
   gap: 10px;
   padding: 12px 14px 13px;
   border-radius: var(--radius);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-border);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
   color: var(--text);
   overflow: hidden;
 }
 :global(.glass) .toast {
-  background: var(--glass-bg-strong);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  background: var(--toast-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 .toast-icon {
   flex-shrink: 0;
@@ -103,7 +103,7 @@ const icons: Record<ToastType, string> = {
 .toast-message {
   margin-top: 3px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--toast-muted);
   line-height: 1.55;
   word-break: break-word;
 }

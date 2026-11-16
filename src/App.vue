@@ -471,7 +471,7 @@ watch(theme, (t) => applyTheme(t));
           </template>
         </EmptyState>
       </div>
-      <transition v-else name="view" mode="out-in">
+      <transition v-else name="view" appear>
         <component
           :is="viewMap[activeView as keyof typeof viewMap]"
           :key="activeView"
@@ -542,6 +542,8 @@ watch(theme, (t) => applyTheme(t));
   display: flex;
   height: 100%;
   width: 100%;
+  /* 外壳固定不参与页面切换时的重排 */
+  contain: layout paint;
 }
 .content {
   flex: 1;
@@ -550,6 +552,8 @@ watch(theme, (t) => applyTheme(t));
   overflow-x: hidden;
   padding: 24px 28px;
   background: var(--bg);
+  /* 切换页面时避免整页重排，减少模糊层重新栅格化造成的「顿挫」 */
+  contain: layout paint style;
 }
 .load-error {
   max-width: 620px;
